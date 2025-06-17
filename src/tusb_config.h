@@ -27,8 +27,7 @@
 #define _TUSB_CONFIG_H_
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 //--------------------------------------------------------------------
@@ -97,13 +96,49 @@ extern "C"
 
 //------------- CLASS -------------//
 #define CFG_TUD_HID 1
+#define CFG_TUD_AUDIO 1
 #define CFG_TUD_CDC 0
+
+// --- CDC buffer sizes (required by TinyUSB ≥0.15) -----------------
+#ifndef CFG_TUD_CDC_RX_BUFSIZE
+#define CFG_TUD_CDC_RX_BUFSIZE 64   // bytes  (may raise later)
+#endif
+
+#ifndef CFG_TUD_CDC_TX_BUFSIZE
+#define CFG_TUD_CDC_TX_BUFSIZE 64   // bytes  (may raise later)
+#endif
+
 #define CFG_TUD_MSC 0
 #define CFG_TUD_MIDI 0
 #define CFG_TUD_VENDOR 0
 
 // HID buffer size Should be sufficient to hold ID (if any) + Data
 #define CFG_TUD_HID_EP_BUFSIZE 16
+
+/* ----------------  AUDIO function 1 (mono mic @48 kHz) ---------------- */
+#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX   1        // mono
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_TYPE     1        // PCM
+#define CFG_TUD_AUDIO_FUNC_1_SUBFORMAT       AUDIO_CS_FORMAT_TYPE_I_PCM
+#define CFG_TUD_AUDIO_FUNC_1_RESOLUTION_BITS 16
+#define CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE     48000
+
+/* Endpoint payload size = samples per ms × bytes/sample × channels
+   48 kHz × 2 × 1 / 1000  = 96 B  */
+#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ        96
+
+/* Total size (incl. IAD) of the microphone-only descriptor set
+   produced with TUD_AUDIO_MIC_DESCRIPTOR()                         */
+#define CFG_TUD_AUDIO_FUNC_1_DESC_LEN        TUD_AUDIO_MIC_ONE_CH_DESC_LEN
+
+/* ---- extra parameters the TinyUSB audio driver insists on --------- */
+#define CFG_TUD_AUDIO_FUNC_1_N_AS_INT      1   /* 1 streaming interface
+                                                  (alt-0 + alt-1)        */
+#define CFG_TUD_AUDIO_FUNC_1_CTRL_BUF_SZ  64   /* control-request buffer */
+
+// --- enable TinyUSB's internal log trace -----------------
+#ifndef CFG_TUSB_DEBUG
+#define CFG_TUSB_DEBUG 2        // 0=off, 1=error, 2=info, 3=verbose
+#endif
 
 #ifdef __cplusplus
 }

@@ -23,15 +23,13 @@
  *
  */
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 
 #include "bsp/board.h"
 #include "tusb.h"
 
 #include "usb_descriptors.h"
 #include "keyboard.h"
+#include "audio.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 extern "C" {
@@ -114,12 +112,21 @@ int main(void)
     // ------------------------------------
     tusb_init();
 
+    // ---- wait for the host to finish configuring the device ----
+    while (!tud_mounted()) {
+        tud_task();
+        sleep_ms(10);
+    }
+
+    audio_init();
+
     while (1)
     {
         tud_task(); // tinyusb device task
 
         pulse_task();            // NEW : converts pulse train to one keystroke
         hangup_task();         // NEW : sends Ctrl-W on off-hook
+        audio_task();          // keeps place-holders symmetrical
         // hid_task(); // keyboard implementation
     }
 

@@ -6,14 +6,16 @@ export PICO_PLATFORM=rp2040
 export PICO_BOARD=pico
 
 mkdir -p build
-cd build
+cd build || exit
+
+rm src/${file}.uf2
 cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build . --target ${file}
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	cp src/${file}.uf2 /Volumes/RPI-RP2
 else
-	cp src/${file}.uf2 /media/$USER/RPI-RP2
+	cp src/${file}.uf2 "/media/$USER/RPI-RP2"
 fi
 
 cd ..
