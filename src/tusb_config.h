@@ -115,25 +115,25 @@ extern "C" {
 // HID buffer size Should be sufficient to hold ID (if any) + Data
 #define CFG_TUD_HID_EP_BUFSIZE 16
 
-/* ----------------  AUDIO function 1 (mono mic @48 kHz) ---------------- */
-#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX   1        // mono
-#define CFG_TUD_AUDIO_FUNC_1_FORMAT_TYPE     1        // PCM
+/* ----------------  AUDIO function 1 (mono headset @48 kHz) ---------------- */
+#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX   1      // 1 channel for microphone
+#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX   1      // 1 channel for speaker
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_TYPE     1      // PCM
 #define CFG_TUD_AUDIO_FUNC_1_SUBFORMAT       AUDIO_CS_FORMAT_TYPE_I_PCM
 #define CFG_TUD_AUDIO_FUNC_1_RESOLUTION_BITS 16
 #define CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE     48000
 
 /* Endpoint payload size = samples per ms × bytes/sample × channels
    48 kHz × 2 × 1 / 1000  = 96 B  */
-#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ        96
-
-/* Total size (incl. IAD) of the microphone-only descriptor set
-   produced with TUD_AUDIO_MIC_DESCRIPTOR()                         */
-#define CFG_TUD_AUDIO_FUNC_1_DESC_LEN        TUD_AUDIO_MIC_ONE_CH_DESC_LEN
+#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ         96     // mic: 48 frames × 1 ch × 2 bytes
+#define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ        96     // spk: 48 frames × 1 ch × 2 bytes
 
 /* ---- extra parameters the TinyUSB audio driver insists on --------- */
-#define CFG_TUD_AUDIO_FUNC_1_N_AS_INT      1   /* 1 streaming interface
-                                                  (alt-0 + alt-1)        */
+#define CFG_TUD_AUDIO_FUNC_1_N_AS_INT      2   /* 2 streaming interfaces: spk + mic */
 #define CFG_TUD_AUDIO_FUNC_1_CTRL_BUF_SZ  64   /* control-request buffer */
+
+/* Descriptor length for our custom headset */
+#define CFG_TUD_AUDIO_FUNC_1_DESC_LEN      182
 
 // --- enable TinyUSB's internal log trace -----------------
 #ifndef CFG_TUSB_DEBUG

@@ -2,7 +2,7 @@
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
 #include "tusb.h"
-#include "class/audio/audio.h"      // TinyUSB Audio helper macros / types
+#include "class/audio/audio_device.h"   // TinyUSB Audio device API
 
 // TinyUSB currently exposes only CUR & RANGE, but the Linux UAC1 driver
 // also sends GET_MIN / GET_MAX / GET_RES.  Define the absent codes here.
@@ -20,7 +20,7 @@
 #define AUDIO_ADC_CH       0
 #define SAMPLE_RATE_HZ     48000
 #define SAMPLES_PER_FRAME  48          // 1-ms worth of samples
-static int16_t pcm_buf[SAMPLES_PER_FRAME];
+static int16_t pcm_buf[SAMPLES_PER_FRAME];       // mono
 
 static uint32_t current_sample_rate = SAMPLE_RATE_HZ;            // Hz
 
@@ -34,26 +34,38 @@ static const int16_t VOLUME_RES = 256;                  //   1 dB step
 static const uint8_t MUTE_MIN = 0;
 static const uint8_t MUTE_MAX = 1;
 static const uint8_t MUTE_RES = 1;
+static uint8_t zero_buf[32] = { 0 };   // generic dummy answer
+
+// ------- interface numbers (must match usb_descriptors.c) ------------
+#define ITF_NUM_AUDIO_STREAMING_SPK  1   // alt-0 = idle, alt-1 = stream  
+#define ITF_NUM_AUDIO_STREAMING_MIC  2   // alt-0 = idle, alt-1 = stream
+
+// ------- function IDs for TinyUSB callbacks -------------------------
+#define AUDIO_FUNC_ID_HEADSET        0   // Single headset function
+
+static volatile bool mic_streaming = false;
+static volatile bool spk_streaming = false;
 
 /* ------------ TinyUSB callback: stack requests audio data ---------- */
-extern "C" uint16_t tud_audio_tx_done_pre_load_cb(uint8_t itf,
-                                                  uint8_t ep_in,
-                                                  uint16_t cur_alt_setting,
-                                                  uint8_t **next_buffer)
+extern "C" bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t func_id, uint8_t ep_in, uint8_t cur_alt_setting)
 {
-  (void)itf; (void)ep_in; (void)cur_alt_setting;
+  (void)rhport; (void)ep_in; (void)func_id; (void)cur_alt_setting;
 
-  /* Fill pcm_buf with fresh samples ------------------------------ */
-  for (uint i = 0; i < SAMPLES_PER_FRAME; ++i)
-  {
-    uint16_t raw = adc_read();              // 12-bit unsigned
-    /* bias-remove + convert to signed 16-bit */
-    int16_t  s16 = ((int32_t)raw - 2048) << 4;
-    pcm_buf[i] = s16;
-  }
+  /* Always return false to disable all audio transmission for now */
+  return false;
+}
 
-  *next_buffer = (uint8_t*)pcm_buf;
-  return sizeof(pcm_buf);                   // #bytes made available
+/* ------------ TinyUSB callback: speaker samples received ------------- */
+extern "C" void tud_audio_rx_done_post_read_cb(uint8_t itf,
+                                               uint8_t ep_out,
+                                               uint16_t cur_alt_setting,
+                                               uint8_t *buffer,
+                                               uint16_t buf_size)
+{
+  if (!spk_streaming) return;        // nothing to do
+  (void)itf; (void)ep_out; (void)cur_alt_setting;
+  /* TODO: copy ‘buffer’ (buf_size bytes, 16-bit mono @48 kHz) to your DAC.
+     For now we just ignore them, keeping the endpoint serviced.         */
 }
 
 /* ------------ public helpers ------------------------------------- */
@@ -75,6 +87,13 @@ extern "C" {
 #define AUDIO_ENTITY_FEATURE_UNIT   0x02
 #define AUDIO_ENTITY_CLOCK_SOURCE   0x04
 
+// ── extra entity/control used by the Input-Terminal ────────────────
+#define AUDIO_ENTITY_INPUT_TERMINAL  0x01            // produced by
+                                                     // TUD_AUDIO_MIC_*_DESCRIPTOR()
+#ifndef AUDIO_TE_CTRL_CONNECTOR
+#define AUDIO_TE_CTRL_CONNECTOR     0x02            // “Connector” ctl-selector
+#endif
+
 /* ------------  SET requests (host → device) ------------------------ */
 bool tud_audio_set_req_entity_cb(uint8_t rhport,
                                  tusb_control_request_t const* p_request,
@@ -83,7 +102,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport,
   uint8_t  entity = TU_U16_HIGH(p_request->wIndex);
   uint8_t  ctrl   = TU_U16_HIGH(p_request->wValue);
   uint8_t  chan   = TU_U16_LOW (p_request->wValue);
-  if (chan > 1)                        // only master(0) & ch-1(1) valid
+  if (chan > 1)                        // only master (0) & ch-1 (1)
     return false;                      // STALL anything above that
 
   /* Host is changing sample-rate ? ---------------------------------- */
@@ -115,6 +134,22 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport,
   {
     cur_volume[chan] = (int16_t)(p_buff[0] | (p_buff[1] << 8));
     return true;
+  }
+
+  /* Host tries to SET the (unused) connector status -------------- */
+  if (entity == AUDIO_ENTITY_INPUT_TERMINAL &&
+      ctrl   == AUDIO_TE_CTRL_CONNECTOR     &&
+      p_request->bRequest == AUDIO_CS_REQ_CUR)
+  {
+    /* we don’t maintain a runtime connector state → just ACK        */
+    return true;
+  }
+
+  /* Any other SET_CUR to the Input-Terminal: acknowledge & ignore */
+  if (entity == AUDIO_ENTITY_INPUT_TERMINAL &&
+      p_request->bRequest == AUDIO_CS_REQ_CUR)
+  {
+    return true;                        // do nothing, but don’t STALL
   }
 
   /* Everything else: just acknowledge                                */
@@ -230,19 +265,84 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport,
     }
   }
 
-  /* Unhandled → STALL                                                */
-  return false;
+  /* ----------- Input Terminal (ID 1) – connector status ---------- */
+  if (entity == AUDIO_ENTITY_INPUT_TERMINAL &&
+      ctrl   == AUDIO_TE_CTRL_CONNECTOR)
+  {
+    // Always “embedded / permanently connected” (= 0x0000)
+    static const uint16_t conn_cur = 0;
+
+    if (p_request->bRequest == AUDIO_CS_REQ_CUR)
+      return tud_control_xfer(rhport, p_request,
+                              (void*)&conn_cur, sizeof(conn_cur));
+
+    if (p_request->bRequest == AUDIO_CS_REQ_RANGE)
+    {
+      struct __attribute__((packed)) {
+        uint16_t wNumSubRanges;
+        uint16_t wMin, wMax, wRes;
+      } conn_range = { 1, 0, 0, 0 };        // fixed at 0
+      return tud_control_xfer(rhport, p_request,
+                              &conn_range, sizeof(conn_range));
+    }
+
+    // MIN / MAX / RES all identical to CUR (0)
+    if (   p_request->bRequest == AUDIO_CS_REQ_MIN
+        || p_request->bRequest == AUDIO_CS_REQ_MAX
+        || p_request->bRequest == AUDIO_CS_REQ_RES)
+      return tud_control_xfer(rhport, p_request,
+                              (void*)&conn_cur, sizeof(conn_cur));
+  }
+  
+  /* ---------- any other Input-Terminal (ID 1) control ------------ */
+  if (entity == AUDIO_ENTITY_INPUT_TERMINAL)        // not CONNECTOR
+  {
+    // Always “0” (= inactive / not-supported)
+    static const uint8_t zero8 = 0;
+  
+    if (   p_request->bRequest == AUDIO_CS_REQ_CUR
+        || p_request->bRequest == AUDIO_CS_REQ_MIN
+        || p_request->bRequest == AUDIO_CS_REQ_MAX
+        || p_request->bRequest == AUDIO_CS_REQ_RES)
+    {
+      return tud_control_xfer(rhport, p_request,
+                              (void*)&zero8, sizeof(zero8));
+    }
+  
+    if (p_request->bRequest == AUDIO_CS_REQ_RANGE)
+    {
+      struct __attribute__((packed)) {
+        uint16_t wNumSubRanges;
+        uint8_t  bMin, bMax, bRes;
+      } range8 = { 1, 0, 0, 0 };          // fixed at 0
+      return tud_control_xfer(rhport, p_request,
+                              &range8, sizeof(range8));
+    }
+  }
+  
+  /* ---------- any other request we don’t actively support ---------- */
+  uint16_t len = p_request->wLength;                   // host expects …
+  if (len > sizeof(zero_buf)) len = sizeof(zero_buf);  // … max 32 bytes
+  return tud_control_xfer(rhport, p_request, zero_buf, len);
 }
 
 /* ------------  Interface-alternate-setting request --------------- */
 bool tud_audio_set_itf_cb(uint8_t rhport,
                           tusb_control_request_t const* p_request)
 {
-  uint8_t alt_setting = TU_U16_LOW(p_request->wValue); // 0 = idle, 1 = streaming
-  (void)alt_setting;
+  uint8_t alt_setting = TU_U16_LOW(p_request->wValue);   // 0 = idle
+  uint8_t itf         = TU_U16_LOW(p_request->wIndex);   // interface #
 
-  /* send the required zero-length status packet */
-  return tud_control_status(rhport, p_request);
+  if (itf == ITF_NUM_AUDIO_STREAMING_MIC) {
+    mic_streaming = (alt_setting != 0);
+    TU_LOG2("  Microphone streaming: %s\r\n", mic_streaming ? "ON" : "OFF");
+  }
+  else if (itf == ITF_NUM_AUDIO_STREAMING_SPK) {
+    spk_streaming = (alt_setting != 0);
+    TU_LOG2("  Speaker streaming: %s\r\n", spk_streaming ? "ON" : "OFF");
+  }
+
+  return tud_control_status(rhport, p_request);  // ZLP ACK
 }
 
 } // extern "C"
