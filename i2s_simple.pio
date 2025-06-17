@@ -1,0 +1,53 @@
+.program i2s_simple
+.side_set 2
+
+; Simplified I2S output program for debugging
+; Outputs continuous test pattern to verify timing
+; Pin assignments:
+; - OUT pin 0: Data output (DIN)
+; - Side-set pin 0: Bit clock (BCLK)  
+; - Side-set pin 1: Left/Right clock (LRCLK)
+
+.wrap_target
+    ; Output 16 clocks with LRCLK high (left channel)
+    set x, 15           side 0b10   [1]  ; BCLK=0, LRCLK=1
+left_loop:
+    out pins, 1         side 0b11   [1]  ; BCLK=1, LRCLK=1, output bit
+    out pins, 1         side 0b10   [1]  ; BCLK=0, LRCLK=1, output bit
+    jmp x-- left_loop   side 0b10   [0]  ; Continue loop
+    
+    ; Output 16 clocks with LRCLK low (right channel)
+    set x, 15           side 0b00   [1]  ; BCLK=0, LRCLK=0
+right_loop:
+    out pins, 1         side 0b01   [1]  ; BCLK=1, LRCLK=0, output bit
+    out pins, 1         side 0b00   [1]  ; BCLK=0, LRCLK=0, output bit
+    jmp x-- right_loop  side 0b00   [0]  ; Continue loop
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void i2s_simple_program_init(PIO pio, uint sm, uint offset, uint data_pin, uint bclk_pin) {
+    // Configure pins
+    pio_gpio_init(pio, data_pin);
+    pio_gpio_init(pio, bclk_pin);
+    pio_gpio_init(pio, bclk_pin + 1); // LRCLK is BCLK + 1
+    
+    // Set pin directions
+    pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, bclk_pin, 2, true);
+    
+    // Configure state machine
+    pio_sm_config c = i2s_simple_program_get_default_config(offset);
+    
+    sm_config_set_out_pins(&c, data_pin, 1);
+    sm_config_set_sideset_pins(&c, bclk_pin);
+    
+    // Shift out MSB first, autopull threshold 32
+    sm_config_set_out_shift(&c, false, true, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    
+    // Initialize state machine
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

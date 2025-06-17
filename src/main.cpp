@@ -32,16 +32,15 @@
 #include "audio.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "ws2812.h"
 extern "C" {
 #include "pico/bootrom.h"
 }
 
 // -----------------------------------------------------------------
 // Arduino-compat helpers for reset_usb_boot() call
-#ifndef LED_BUILTIN
 #include "pico/stdlib.h"
-#define LED_BUILTIN PICO_DEFAULT_LED_PIN   // map to Pico's on-board LED
-#endif
+#define LED_BUILTIN 16   // WS2812 LED on GPIO16
 
 static inline uint digitalPinToPinName(uint pin) { return pin; }
 // -----------------------------------------------------------------
@@ -100,6 +99,12 @@ void gpio_irq_callback(uint gpio, uint32_t events)
 int main(void)
 {
     board_init();
+
+    // Initialize WS2812 LED and blink green on boot
+    ws2812_init();
+    ws2812_set(0, 255, 0);  // Green
+    sleep_ms(500);
+    ws2812_set(0, 0, 0);    // Off
     // ---------- pulse counter pin --------------
     gpio_init(PULSE_PIN);
     gpio_pull_up(PULSE_PIN);                       // idle = high, pulse = low

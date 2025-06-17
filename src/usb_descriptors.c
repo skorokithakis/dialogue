@@ -39,10 +39,10 @@
 /* generic helper present in every TinyUSB that has Audio support */
 #  if defined(TUD_AUDIO_MIC_DESCRIPTOR) && defined(TUD_AUDIO_MIC_DESCRIPTOR_LEN)
 
-    #define TUD_AUDIO_MIC_TWO_CH_DESC_LEN \
+#define TUD_AUDIO_MIC_TWO_CH_DESC_LEN \
             TUD_AUDIO_MIC_DESCRIPTOR_LEN(2)
 
-    #define TUD_AUDIO_MIC_TWO_CH_DESCRIPTOR(_itfnum, _stridx,        \
+#define TUD_AUDIO_MIC_TWO_CH_DESCRIPTOR(_itfnum, _stridx,        \
                                             _nBytesPerSubslot,        \
                                             _nBitResolution,          \
                                             _epin, _epsize)           \
@@ -52,15 +52,15 @@
                                       _epin, _epsize)
 
 #  else
-    /* ----------------------------------------------------------------
-     * Old TinyUSB releases have only the ONE-CH descriptor helpers.
-     * Map the 2-channel names to the mono equivalents so the project
-     * still compiles.  (You will enumerate as one-channel audio.)
-     * ----------------------------------------------------------------*/
-    #define TUD_AUDIO_MIC_TWO_CH_DESC_LEN \
+/* ----------------------------------------------------------------
+ * Old TinyUSB releases have only the ONE-CH descriptor helpers.
+ * Map the 2-channel names to the mono equivalents so the project
+ * still compiles.  (You will enumerate as one-channel audio.)
+ * ----------------------------------------------------------------*/
+#define TUD_AUDIO_MIC_TWO_CH_DESC_LEN \
             TUD_AUDIO_MIC_ONE_CH_DESC_LEN
 
-    #define TUD_AUDIO_MIC_TWO_CH_DESCRIPTOR(_itfnum, _stridx,          \
+#define TUD_AUDIO_MIC_TWO_CH_DESCRIPTOR(_itfnum, _stridx,          \
                                             _nBytesPerSubslot,          \
                                             _nBitResolution,            \
                                             _epin, _epsize)             \
@@ -155,7 +155,7 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
 
 enum {
     ITF_NUM_AUDIO_CONTROL = 0,       // Single audio control interface
-    ITF_NUM_AUDIO_STREAMING_SPK,     // 1 - Speaker streaming interface  
+    ITF_NUM_AUDIO_STREAMING_SPK,     // 1 - Speaker streaming interface
     ITF_NUM_AUDIO_STREAMING_MIC,     // 2 - Microphone streaming interface
 
     ITF_NUM_HID,                     // 3
@@ -163,9 +163,9 @@ enum {
 };
 
 // Calculate the exact length of our custom headset descriptor
-// IAD(8) + STD_AC(9) + CS_AC_HDR(10) + IN_TERM(12) + FEAT_UNIT(9) + OUT_TERM(9) + 
-// IN_TERM(12) + OUT_TERM(9) + SPK_AS_ALT0(9) + SPK_AS_ALT1(9) + SPK_CS_AS(7) + 
-// SPK_FORMAT(11) + SPK_EP(9) + SPK_CS_EP(7) + MIC_AS_ALT0(9) + MIC_AS_ALT1(9) + 
+// IAD(8) + STD_AC(9) + CS_AC_HDR(10) + IN_TERM(12) + FEAT_UNIT(9) + OUT_TERM(9) +
+// IN_TERM(12) + OUT_TERM(9) + SPK_AS_ALT0(9) + SPK_AS_ALT1(9) + SPK_CS_AS(7) +
+// SPK_FORMAT(11) + SPK_EP(9) + SPK_CS_EP(7) + MIC_AS_ALT0(9) + MIC_AS_ALT1(9) +
 // MIC_CS_AS(7) + MIC_FORMAT(11) + MIC_EP(9) + MIC_CS_EP(7) = 182 bytes
 #define TUD_AUDIO_HEADSET_MONO_DESC_LEN  182
 
@@ -188,11 +188,11 @@ uint8_t const desc_configuration[] = {
     /* --- Custom UAC1 headset descriptor (single audio function) --- */
     // IAD (Interface Association Descriptor)
     TUD_AUDIO_DESC_IAD(ITF_NUM_AUDIO_CONTROL, 3, 0),
-    
+
     // Audio Control Interface
     TUD_AUDIO_DESC_STD_AC(ITF_NUM_AUDIO_CONTROL, 0, 0),
-    
-    // Class-Specific AC Interface Header 
+
+    // Class-Specific AC Interface Header
     0x0A,                                    // bLength
     TUSB_DESC_CS_INTERFACE,                  // bDescriptorType
     AUDIO_CS_AC_INTERFACE_HEADER,            // bDescriptorSubtype

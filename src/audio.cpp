@@ -2,7 +2,9 @@
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
 #include "tusb.h"
-#include "class/audio/audio_device.h"   // TinyUSB Audio device API
+#include "i2s.h"                        // I2S DAC output
+#include "ws2812.h"                     // WS2812 LED
+#include <math.h>          // sine-wave test tone
 
 // TinyUSB currently exposes only CUR & RANGE, but the Linux UAC1 driver
 // also sends GET_MIN / GET_MAX / GET_RES.  Define the absent codes here.
@@ -21,6 +23,7 @@
 #define SAMPLE_RATE_HZ     48000
 #define SAMPLES_PER_FRAME  48          // 1-ms worth of samples
 static int16_t pcm_buf[SAMPLES_PER_FRAME];       // mono
+static uint8_t audio_buffer[96 * 2];              // Buffer for USB audio data
 
 static uint32_t current_sample_rate = SAMPLE_RATE_HZ;            // Hz
 
@@ -37,8 +40,10 @@ static const uint8_t MUTE_RES = 1;
 static uint8_t zero_buf[32] = { 0 };   // generic dummy answer
 
 // ------- interface numbers (must match usb_descriptors.c) ------------
-#define ITF_NUM_AUDIO_STREAMING_SPK  1   // alt-0 = idle, alt-1 = stream  
+#define ITF_NUM_AUDIO_STREAMING_SPK  1   // alt-0 = idle, alt-1 = stream
 #define ITF_NUM_AUDIO_STREAMING_MIC  2   // alt-0 = idle, alt-1 = stream
+#define TEST_TONE_FREQ_HZ   440.0f   // A4
+static float test_phase = 0.0f;      // 0 … <1.0 cycles
 
 // ------- function IDs for TinyUSB callbacks -------------------------
 #define AUDIO_FUNC_ID_HEADSET        0   // Single headset function
@@ -56,16 +61,34 @@ extern "C" bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t func_id, u
 }
 
 /* ------------ TinyUSB callback: speaker samples received ------------- */
-extern "C" void tud_audio_rx_done_post_read_cb(uint8_t itf,
-                                               uint8_t ep_out,
-                                               uint16_t cur_alt_setting,
-                                               uint8_t *buffer,
-                                               uint16_t buf_size)
+extern "C" bool tud_audio_rx_done_pre_read_cb(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id, uint8_t ep_out, uint8_t cur_alt_setting)
 {
-  if (!spk_streaming) return;        // nothing to do
-  (void)itf; (void)ep_out; (void)cur_alt_setting;
-  /* TODO: copy ‘buffer’ (buf_size bytes, 16-bit mono @48 kHz) to your DAC.
-     For now we just ignore them, keeping the endpoint serviced.         */
+  (void)rhport; (void)func_id; (void)ep_out; (void)cur_alt_setting;
+
+  // Debug counter
+  static uint32_t call_count = 0;
+  call_count++;
+
+  if (!spk_streaming) {
+    // Try to force streaming to be enabled for debugging
+    spk_streaming = true;
+  }
+
+  // Buffer to read audio data
+  static uint8_t audio_buffer[192];  // 48 samples * 2 bytes/sample * 2 channels = 192 bytes max
+
+  // Read the actual audio data from USB
+  uint16_t bytes_read = tud_audio_read(audio_buffer, n_bytes_received);
+
+  if (bytes_read > 0 && spk_streaming) {
+    // Send audio samples to I2S DAC
+    // Buffer contains 16-bit mono samples at 48kHz
+    if (i2s_is_ready()) {
+      i2s_write_samples((int16_t*)audio_buffer, bytes_read / sizeof(int16_t));
+    }
+  }
+
+  return true;  // Continue receiving audio
 }
 
 /* ------------ public helpers ------------------------------------- */
@@ -77,9 +100,34 @@ void audio_init(void)
   /* continuous-free-running mode – one sample per fifo read       */
   adc_fifo_setup(true, false, 1, false, false);
   adc_run(true);
+
+  // Initialize I2S DAC output
+  i2s_init();
 }
 
-void audio_task(void) { /* nothing needed – callback drives flow */ }
+void audio_task(void)
+{
+  /* When the speaker stream from USB is *not* active, feed a local
+     440 Hz sine wave into the I2S DAC so we can verify hardware
+     wiring and timing.  As soon as the host starts the speaker
+     interface (spk_streaming == true) the test tone is suppressed
+     and the regular USB-audio path takes over.                       */
+  if (!spk_streaming && i2s_is_ready())
+  {
+    int16_t frame[SAMPLES_PER_FRAME];
+
+    for (size_t i = 0; i < SAMPLES_PER_FRAME; ++i)
+    {
+      float sample = sinf(2.0f * (float)M_PI * test_phase);
+      frame[i] = (int16_t)(sample * 16000.0f);   // ≈ –6 dBFS
+
+      test_phase += TEST_TONE_FREQ_HZ / (float)SAMPLE_RATE_HZ;
+      if (test_phase >= 1.0f) test_phase -= 1.0f;
+    }
+
+    i2s_write_samples(frame, SAMPLES_PER_FRAME);
+  }
+}
 
 extern "C" {
 
@@ -91,7 +139,7 @@ extern "C" {
 #define AUDIO_ENTITY_INPUT_TERMINAL  0x01            // produced by
                                                      // TUD_AUDIO_MIC_*_DESCRIPTOR()
 #ifndef AUDIO_TE_CTRL_CONNECTOR
-#define AUDIO_TE_CTRL_CONNECTOR     0x02            // “Connector” ctl-selector
+#define AUDIO_TE_CTRL_CONNECTOR     0x02            // "Connector" ctl-selector
 #endif
 
 /* ------------  SET requests (host → device) ------------------------ */
@@ -113,7 +161,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport,
     current_sample_rate =
         (uint32_t)p_buff[0]        |
         ((uint32_t)p_buff[1] << 8) |
-        ((uint32_t)p_buff[2] << 16)| 
+        ((uint32_t)p_buff[2] << 16)|
         ((uint32_t)p_buff[3] << 24);
     return true;
   }
@@ -141,7 +189,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport,
       ctrl   == AUDIO_TE_CTRL_CONNECTOR     &&
       p_request->bRequest == AUDIO_CS_REQ_CUR)
   {
-    /* we don’t maintain a runtime connector state → just ACK        */
+    /* we don't maintain a runtime connector state → just ACK        */
     return true;
   }
 
@@ -149,7 +197,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport,
   if (entity == AUDIO_ENTITY_INPUT_TERMINAL &&
       p_request->bRequest == AUDIO_CS_REQ_CUR)
   {
-    return true;                        // do nothing, but don’t STALL
+    return true;                        // do nothing, but don't STALL
   }
 
   /* Everything else: just acknowledge                                */
@@ -269,7 +317,7 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport,
   if (entity == AUDIO_ENTITY_INPUT_TERMINAL &&
       ctrl   == AUDIO_TE_CTRL_CONNECTOR)
   {
-    // Always “embedded / permanently connected” (= 0x0000)
+    // Always "embedded / permanently connected" (= 0x0000)
     static const uint16_t conn_cur = 0;
 
     if (p_request->bRequest == AUDIO_CS_REQ_CUR)
@@ -293,13 +341,13 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport,
       return tud_control_xfer(rhport, p_request,
                               (void*)&conn_cur, sizeof(conn_cur));
   }
-  
+
   /* ---------- any other Input-Terminal (ID 1) control ------------ */
   if (entity == AUDIO_ENTITY_INPUT_TERMINAL)        // not CONNECTOR
   {
-    // Always “0” (= inactive / not-supported)
+    // Always "0" (= inactive / not-supported)
     static const uint8_t zero8 = 0;
-  
+
     if (   p_request->bRequest == AUDIO_CS_REQ_CUR
         || p_request->bRequest == AUDIO_CS_REQ_MIN
         || p_request->bRequest == AUDIO_CS_REQ_MAX
@@ -308,7 +356,7 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport,
       return tud_control_xfer(rhport, p_request,
                               (void*)&zero8, sizeof(zero8));
     }
-  
+
     if (p_request->bRequest == AUDIO_CS_REQ_RANGE)
     {
       struct __attribute__((packed)) {
@@ -319,8 +367,8 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport,
                               &range8, sizeof(range8));
     }
   }
-  
-  /* ---------- any other request we don’t actively support ---------- */
+
+  /* ---------- any other request we don't actively support ---------- */
   uint16_t len = p_request->wLength;                   // host expects …
   if (len > sizeof(zero_buf)) len = sizeof(zero_buf);  // … max 32 bytes
   return tud_control_xfer(rhport, p_request, zero_buf, len);

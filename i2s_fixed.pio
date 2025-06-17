@@ -1,0 +1,56 @@
+.program i2s
+.side_set 2
+
+; I2S output program. Outputs 16-bit stereo samples
+; Pin assignments:
+; - OUT pin 0: Data output (DIN)
+; - Side-set pin 0: Bit clock (BCLK)
+; - Side-set pin 1: Left/Right clock (LRCLK)
+;
+; The program outputs 32 bits (16 bits left + 16 bits right)
+; LRCLK changes one BCLK period before MSB as per I2S standard
+
+.wrap_target
+public entry_point:
+    ; Left channel (LRCLK = 1)
+    set x, 15           side 0b11   ; Setup loop counter, BCLK=1, LRCLK=1
+    nop                 side 0b10   ; BCLK=0, LRCLK=1 (prepare for data)
+left_loop:
+    out pins, 1         side 0b11   ; Output data bit, BCLK=1, LRCLK=1
+    jmp x-- left_loop   side 0b10   ; BCLK=0, LRCLK=1
+
+    ; Right channel (LRCLK = 0)
+    set x, 15           side 0b01   ; Setup loop counter, BCLK=1, LRCLK=0
+    nop                 side 0b00   ; BCLK=0, LRCLK=0 (prepare for data)
+right_loop:
+    out pins, 1         side 0b01   ; Output data bit, BCLK=1, LRCLK=0
+    jmp x-- right_loop  side 0b00   ; BCLK=0, LRCLK=0
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void i2s_program_init(PIO pio, uint sm, uint offset, uint data_pin, uint bclk_pin) {
+    // Configure pins
+    pio_gpio_init(pio, data_pin);
+    pio_gpio_init(pio, bclk_pin);
+    pio_gpio_init(pio, bclk_pin + 1); // LRCLK is BCLK + 1
+
+    // Set pin directions
+    pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, bclk_pin, 2, true);
+
+    // Configure state machine
+    pio_sm_config c = i2s_program_get_default_config(offset);
+
+    sm_config_set_out_pins(&c, data_pin, 1);
+    sm_config_set_sideset_pins(&c, bclk_pin);
+
+    // Shift out MSB first, autopull threshold 32
+    sm_config_set_out_shift(&c, false, true, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    // Initialize state machine
+    pio_sm_init(pio, sm, offset + i2s_offset_entry_point, &c);
+}
+%}
