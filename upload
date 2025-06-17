@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 file=keyboard
 
@@ -6,14 +7,40 @@ export PICO_PLATFORM=rp2040
 export PICO_BOARD=pico
 
 mkdir -p build
-cd build
+cd build || exit
+
+rm -f src/${file}.*
 cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build . --target ${file}
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	cp src/${file}.uf2 /Volumes/RPI-RP2
 else
-	cp src/${file}.uf2 /media/$USER/RPI-RP2
+    MOUNT_POINT="/media/$USER/RPI-RP2"
+    DEVICE="/dev/sdc1"
+
+    # If the RP2040 appears as /dev/sdc1 but is not yet mounted, try to mount it.
+    if [[ -b "$DEVICE" && ! -d "$MOUNT_POINT" ]]; then
+        ATTEMPTS=0
+        MAX_ATTEMPTS=5        # adjust if you want more/less retries
+
+        while [[ ! -d "$MOUNT_POINT" && $ATTEMPTS -lt $MAX_ATTEMPTS ]]; do
+            echo "Attempting to mount $DEVICE ($((ATTEMPTS+1))/$MAX_ATTEMPTS)…"
+            udisksctl mount -b "$DEVICE" >/dev/null 2>&1 || true
+            sleep 1           # give udisksctl a moment
+            ((++ATTEMPTS))          # pre-increment keeps exit status 0
+#          or: ((ATTEMPTS+=1)) || true
+        done
+    fi
+
+    # Only attempt to copy if the mount point now exists
+    if [[ -d "$MOUNT_POINT" ]]; then
+        cp src/${file}.uf2 "$MOUNT_POINT"
+        echo "Copied file."
+    else
+        echo "ERROR: $MOUNT_POINT not available; UF2 file not copied." >&2
+        exit 1
+    fi
 fi
 
 cd ..
