@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+cd "$(dirname "$0")"   # always work relative to this script
+
 file=keyboard
 
 export PICO_PLATFORM=rp2040
@@ -11,7 +13,23 @@ cd build || exit
 
 rm -f src/${file}.*
 cmake -DCMAKE_BUILD_TYPE=Release ..
+
+# Flag parsing
+TEST_ONLY=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --test-only) TEST_ONLY=true; shift ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
+
 cmake --build . --target ${file}
+
+if [[ "$TEST_ONLY" == true ]]; then
+  echo "Test-only mode: build completed, skipping upload."
+  cd ..            # leave build/ before exiting
+  exit 0
+fi
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	cp src/${file}.uf2 /Volumes/RPI-RP2

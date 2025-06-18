@@ -20,13 +20,14 @@ int8_t  mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];
 int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];
 
 /* Buffers for microphone and speaker data */
-int32_t mic_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4];
+int32_t mic_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ  / 4];
 int32_t spk_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4];
-int     spk_data_size;
+/* NEW – local copy used by audio_task() to decouple USB IRQ and DMA */
+static int32_t spk_copy_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4];
+volatile int     spk_data_size;
 /* Resolutions per format */
 const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {
-    CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX,
-    CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX
+    CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX   // only 24/32-bit left
 };
 uint8_t current_resolution;
 
@@ -221,12 +222,15 @@ bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf,
 /* Audio processing task */
 void audio_task(void)
 {
-    if (spk_data_size)
+    uint32_t bytes = spk_data_size;
+    if (bytes)
     {
-        // samples are stereo, 16- or 24-bit, little-endian packed into
-        // 32-bit words already – hand them straight to the DAC
-        i2s_dac_write(spk_buf, spk_data_size/4);   // words = bytes/4
-        spk_data_size = 0;
+        /* --- immediately take ownership of the packet ----------------- */
+        memcpy(spk_copy_buf, spk_buf, bytes);   // fast, < 200 B @ 48 kHz
+        spk_data_size = 0;                      // allow next USB packet
+
+        /* samples are already 32-bit L,R words → push to DAC */
+        i2s_dac_write(spk_copy_buf, bytes / 4); // words = bytes / 4
     }
 }
 
