@@ -3,6 +3,7 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "i2s_dac.h"
 
 extern uint32_t blink_interval_ms;     // provided by main.cpp
 
@@ -96,6 +97,7 @@ static bool tud_audio_clock_set_request(uint8_t rhport, audio_control_request_t 
     if (request->bControlSelector == AUDIO_CS_CTRL_SAM_FREQ)
     {
         current_sample_rate = (uint32_t)((audio_control_cur_4_t const *)buf)->bCur;
+        i2s_dac_init(current_sample_rate);   // re-configure I²S clocks
         return true;
     }
     return false;
@@ -221,34 +223,10 @@ void audio_task(void)
 {
     if (spk_data_size)
     {
-        if (current_resolution == 16)
-        {
-            int16_t *src   = (int16_t *)spk_buf;
-            int16_t *limit = (int16_t *)spk_buf + spk_data_size / 2;
-            int16_t *dst   = (int16_t *)mic_buf;
-            while (src < limit)
-            {
-                int32_t left  = *src++;
-                int32_t right = *src++;
-                *dst++ = (int16_t)((left >> 1) + (right >> 1));
-            }
-            tud_audio_write((uint8_t *)mic_buf, (uint16_t)(spk_data_size / 2));
-            spk_data_size = 0;
-        }
-        else if (current_resolution == 24)
-        {
-            int32_t *src   = spk_buf;
-            int32_t *limit = spk_buf + spk_data_size / 4;
-            int32_t *dst   = mic_buf;
-            while (src < limit)
-            {
-                int32_t left  = *src++;
-                int32_t right = *src++;
-                *dst++ = (int32_t)(((left >> 1) + (right >> 1)) & 0xffffff00ul);
-            }
-            tud_audio_write((uint8_t *)mic_buf, (uint16_t)(spk_data_size / 2));
-            spk_data_size = 0;
-        }
+        // samples are stereo, 16- or 24-bit, little-endian packed into
+        // 32-bit words already – hand them straight to the DAC
+        i2s_dac_write(spk_buf, spk_data_size/4);   // words = bytes/4
+        spk_data_size = 0;
     }
 }
 

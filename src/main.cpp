@@ -31,6 +31,7 @@
 #include "tusb.h"
 
 #include "usb_descriptors.h"
+#include "i2s_dac.h"
 #include "keyboard.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
@@ -119,6 +120,7 @@ int main(void)
     gpio_set_dir(HANGUP_PIN, GPIO_IN);
     // ------------------------------------
     tusb_init();
+    i2s_dac_init(44100);   // default, will be updated on SET_CUR later
 
     while (1)
     {
