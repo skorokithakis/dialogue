@@ -1,0 +1,53 @@
+; Very small 64-bit-frame, stereo I²S transmitter
+; – DATA on pin  I2S_DAC_PIN_DATA
+; – BCK  on side-set pin I2S_DAC_PIN_BCK
+; – WS   on pin  I2S_DAC_PIN_WS
+.program i2s_tx
+.side_set 1                ; 1-bit side-set drives BCK (0 = low, 1 = high)
+
+; ----------- 64-bit frame: 32-bit left, 32-bit right -----------------
+; DATA  = OUT pin     (shift MSB first)
+; BCK   = side-set pin (toggles each half-cycle)
+; WS    = SET  pin     (LOW = left, HIGH = right)
+
+.wrap_target
+    pull    block        side 0        ; --- LEFT word ----------------
+    set     y, 31         side 0
+left_loop:
+    out     pins, 1       side 1       ; BCK ↑, output bit
+    jmp     y-- left_loop side 0       ; BCK ↓, loop 32×
+    set     pins, 1        side 0      ; WS = HIGH (right)
+
+    pull    block        side 0        ; --- RIGHT word ---------------
+    set     y, 31         side 0
+right_loop:
+    out     pins, 1       side 1
+    jmp     y-- right_loop side 0
+    set     pins, 0        side 0      ; WS = LOW (ready for next frame)
+.wrap
+% c-sdk {
+static inline void i2s_tx_program_init(PIO pio, uint sm, uint offset,
+                                       uint data_pin, uint ws_pin,
+                                       uint bck_pin)
+{
+    pio_sm_config c = i2s_tx_program_get_default_config(offset);
+    sm_config_set_out_pins (&c, data_pin, 1);      // already there
+    sm_config_set_sideset_pins(&c, bck_pin);       // already there
+    sm_config_set_set_pins (&c, ws_pin, 1);        // NEW: WS control
+
+    // shift MSB-first, autopull every 32 bits
+    sm_config_set_out_shift(&c, /*shift_right=*/false,
+                                /*autopull=*/true,
+                                /*pull_thres=*/32);
+
+    sm_config_set_clkdiv(&c, 1.f);      // will be replaced later
+    pio_gpio_init(pio, data_pin);
+    pio_gpio_init(pio, ws_pin);
+    pio_gpio_init(pio, bck_pin);
+    pio_sm_set_pindirs_with_mask(pio, sm,
+        (1u<<data_pin) | (1u<<ws_pin) | (1u<<bck_pin),
+        (1u<<data_pin) | (1u<<ws_pin) | (1u<<bck_pin));
+    /* WS is toggled by DMA writing to EXEC, so keep it GPIO-controlled */
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
