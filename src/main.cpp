@@ -56,12 +56,13 @@ static inline uint digitalPinToPinName(uint pin) { return pin; }
 // Blink pattern
 enum
 {
-    BLINK_NOT_MOUNTED = 250, // device not mounted
-    BLINK_MOUNTED = 1000,    // device mounted
-    BLINK_SUSPENDED = 2500,  // device is suspended
+    BLINK_STREAMING = 25,        // streaming data
+    BLINK_NOT_MOUNTED = 250,     // device not mounted
+    BLINK_MOUNTED    = 1000,     // device mounted
+    BLINK_SUSPENDED  = 2500,     // device is suspended
 };
 
-static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
 // ---------------  PULSE-COUNT INPUT ----------------
 #define PULSE_PIN          27      // free GPIO used for pulse train
@@ -79,6 +80,11 @@ void hid_task(void);
 void pulse_task(void);
 void hangup_task(void);
 void gpio_irq_callback(uint gpio, uint32_t events);
+
+extern "C" {
+  void audio_task(void);
+  void audio_control_task(void);
+}
 
 KeyBoard keyboard;
 
@@ -116,11 +122,13 @@ int main(void)
 
     while (1)
     {
-        tud_task(); // tinyusb device task
-
-        pulse_task();            // NEW : converts pulse train to one keystroke
-        hangup_task();         // NEW : sends Ctrl-W on off-hook
-        // hid_task(); // keyboard implementation
+        tud_task();              // TinyUSB core
+        hid_task();              // keyboard implementation
+        audio_task();            // audio task
+        audio_control_task();    // audio control task
+        pulse_task();            // pulse task
+        hangup_task();           // hangup task
+        led_blinking_task();     // blinking task
     }
 
     return 0;

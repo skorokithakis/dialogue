@@ -5,6 +5,7 @@ add_executable(keyboard)
 target_sources(keyboard PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/main.cpp
     ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
+    ${CMAKE_CURRENT_LIST_DIR}/audio_app.c
 )
 
 # Make sure TinyUSB can find tusb_config.h
