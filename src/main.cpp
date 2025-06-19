@@ -252,6 +252,7 @@ void pulse_task(void)
   /* ------------------------------------------------------------- */
   static bool     send_pending = false;      // need to send digit ?
   static uint8_t  digit_key    = 0;          // HID key to emit
+  static bool     pressed      = false;      // phase-tracker for HID send
   /* ------------------------------------------------------------- */
 
   // one-time initialisation
@@ -262,6 +263,15 @@ void pulse_task(void)
     debounce_start  = board_millis();
     last_pulse_time = board_millis();
     init = true;
+  }
+
+  // Abort dialling when handset is hung up (HANGUP_PIN is HIGH)
+  if (gpio_get(HANGUP_PIN))
+  {
+    pulse_count  = 0;
+    send_pending = false;
+    pressed      = false;
+    return;                    // nothing else while on-hook
   }
 
   /* --------- sample pin & drive onboard LED ------------------- */
@@ -316,8 +326,6 @@ void pulse_task(void)
   /* --------- 2-phase HID send (press / release) --------------- */
   if (send_pending && tud_hid_ready())
   {
-    static bool pressed = false;
-
     if (!pressed)                         // phase 1 : press
     {
       uint8_t kc[6] = { digit_key, 0,0,0,0,0 };
