@@ -348,7 +348,8 @@ void hangup_task(void)
     HS_IDLE,
     HS_PRESS_ALTQ,  HS_RELEASE_ALTQ,  HS_WAIT1,
     HS_PRESS_ENTER, HS_RELEASE_ENTER, HS_WAIT2,
-    HS_PRESS_CTRLW, HS_RELEASE_CTRLW
+    HS_PRESS_CTRLW, HS_RELEASE_CTRLW, HS_WAIT3,
+    HS_PRESS_CSH,   HS_RELEASE_CSH
   };
   static HangState state   = HS_IDLE;
   static uint32_t  last_ms = 0;           // used for both 1-s rate-limit and 20-ms waits
@@ -440,7 +441,27 @@ void hangup_task(void)
 
       case HS_RELEASE_CTRLW:
         tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, NULL);
-        last_ms = board_millis();     // restart 1-s rate-limit timer
+        last_ms = board_millis();     // start 20-ms pause before C-S-H
+        state   = HS_WAIT3;
+        break;
+
+      case HS_WAIT3:                         // 20-ms pause after Ctrl-W
+        if (board_millis() - last_ms >= 20) state = HS_PRESS_CSH;
+        break;
+
+      case HS_PRESS_CSH:                     // Ctrl-Shift-H  (press)
+      {
+        uint8_t kc[6] = { HID_KEY_H, 0,0,0,0,0 };
+        tud_hid_keyboard_report(REPORT_ID_KEYBOARD,
+                                KEYBOARD_MODIFIER_LEFTCTRL |
+                                KEYBOARD_MODIFIER_LEFTSHIFT, kc);
+        state = HS_RELEASE_CSH;
+        break;
+      }
+
+      case HS_RELEASE_CSH:                   // Ctrl-Shift-H  (release)
+        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, NULL);
+        last_ms = board_millis();            // restart 1-s rate-limit timer
         state   = HS_IDLE;
         break;
 
