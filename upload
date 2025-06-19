@@ -16,20 +16,45 @@ cmake --build . --target ${file}
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	cp src/${file}.uf2 /Volumes/RPI-RP2
 else
-    MOUNT_POINT="/media/$USER/RPI-RP2"
-    DEVICE="/dev/sdc1"
+    # --- Automatically detect the RP2040 mass-storage device -----------------
+    #
+    # 1.  Try a udev symlink that most modern distros create
+    # 2.  Otherwise fall back to lsblk looking for the “RPI-RP2” model string
+    # -------------------------------------------------------------------------
+    DEVICE=""
+    for dev in /dev/disk/by-id/usb-RPI_RP2*; do
+        [[ -e "$dev" ]] && DEVICE=$(readlink -f "$dev") && break
+    done
 
-    # If the RP2040 appears as /dev/sdc1 but is not yet mounted, try to mount it.
-    if [[ -b "$DEVICE" && ! -d "$MOUNT_POINT" ]]; then
+    # If the symlink method failed, scan lsblk’s MODEL column
+    if [[ -z "$DEVICE" ]]; then
+        DEVICE=$(lsblk -o NAME,MODEL -nr | awk '/RP2/ {print "/dev/"$1; exit}')
+    fi
+
+    # If we only have the base device (/dev/sdX) append the partition “1”
+    if [[ -n "$DEVICE" && "$DEVICE" =~ ^/dev/sd[a-z]$ ]]; then
+        DEVICE="${DEVICE}1"
+    fi
+
+    # Bail out early when we still have nothing
+    if [[ -z "$DEVICE" ]]; then
+        echo "ERROR: Could not locate a Raspberry-Pi RP2040 in BOOTSEL mode." >&2
+        exit 1
+    fi
+
+    # Determine current mount-point (if already mounted)
+    MOUNT_POINT=$(lsblk -no MOUNTPOINT "$DEVICE")
+
+    # Mount it if necessary (retry up to 5×, copied from original logic)
+    if [[ -z "$MOUNT_POINT" ]]; then
         ATTEMPTS=0
-        MAX_ATTEMPTS=5        # adjust if you want more/less retries
-
-        while [[ ! -d "$MOUNT_POINT" && $ATTEMPTS -lt $MAX_ATTEMPTS ]]; do
+        MAX_ATTEMPTS=5
+        while [[ -z "$MOUNT_POINT" && $ATTEMPTS -lt $MAX_ATTEMPTS ]]; do
             echo "Attempting to mount $DEVICE ($((ATTEMPTS+1))/$MAX_ATTEMPTS)…"
             udisksctl mount -b "$DEVICE" >/dev/null 2>&1 || true
-            sleep 1           # give udisksctl a moment
-            ((++ATTEMPTS))          # pre-increment keeps exit status 0
-#          or: ((ATTEMPTS+=1)) || true
+            sleep 1
+            MOUNT_POINT=$(lsblk -no MOUNTPOINT "$DEVICE")
+            ((++ATTEMPTS))
         done
     fi
 
